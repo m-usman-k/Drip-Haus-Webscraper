@@ -1,5 +1,5 @@
+import json, time, re
 import aiohttp, asyncio, os
-import requests, json, time, re
 
 import pandas as pd
 
@@ -20,8 +20,68 @@ OUTPUT_FILE_NAME = "./Drip" + str(int(time.time())) + ".xlsx"
 OUTPUT_SHEET_NAME = "Drip"
 
 # Any useful functions:
+async def ws_each_user_getter(df , index , slug):
+    url = 'wss://drip.haus/drip/websocket?vsn=2.0.0'
+    
+    headers = {
+        'Sec-WebSocket-Extensions': 'permessage-deflate',
+        'Sec-WebSocket-Key': 'LzyNc5teELEMWSliCvrG7w==',
+    }
+
+    # Performing the handshake:
+    async with aiohttp.ClientSession() as session:
+        async with session.ws_connect(url, headers=headers) as ws:
+
+            message = ["3","3","drip","phx_join",{"bearer":"56924e08-0db4-45e2-bd64-cf8547f09c00","anonId":"455f499e-c16d-4eb2-baff-dba09aa9979e","ua":"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0"}]
+            json_message = json.dumps(message)
+            await ws.send_str(json_message)
+
+
+            message = ["3","4","drip","get_channel_details",{"slug":f"{slug}"}]
+            json_message = json.dumps(message)
+            await ws.send_str(json_message)
+
+            while True:
+                async for msg in ws:
+                    if msg.type == aiohttp.WSMsgType.TEXT:
+                        try:
+                            if json.loads(msg.data)[-1]["response"]["result"]["slug"] == slug:
+                                try:
+                                    current_user_data = json.loads(msg.data)[-1]["response"]["result"]
+                                    df.at[index , "Creator Name"] = current_user_data["name"]
+                                    df.at[index , "Profile URL"] = f"https://drip.haus/{slug}"
+                                    df.at[index , "About Section"] = current_user_data["donation_explanation"]
+                                    df.at[index , "No Of Followers"] = current_user_data["member_count"]
+                                    df.at[index , "No Of Thanks"] = current_user_data["donation_num"]
+                                    df.at[index , "Country"] = identify_country(text=current_user_data["donation_explanation"]+current_user_data["copy"])
+                                    
+                                    print(f"🟢| {current_user_data['name']}")
+                                except:
+                                    pass
+                                
+                                return
+                        except Exception as e:
+                            pass
+                        
+                    elif msg.type == aiohttp.WSMsgType.PING:
+                        print("🟢 | Received PING, sending PONG")
+                        await ws.pong()
+
+                    elif msg.type == aiohttp.WSMsgType.PONG:
+                        print("🟢 | Received PONG")
+
+                    elif msg.type == aiohttp.WSMsgType.CLOSE:
+                        print("🔴 | Connection closed by server")
+                        break
+
+                    elif msg.type == aiohttp.WSMsgType.ERROR:
+                        print("🔴 | Error occurred")
+                        break
+
+                await asyncio.sleep(5)
+
 def scrape_each_user(df , index , slug):
-    print(f"{index} | {slug}")
+    return asyncio.run(ws_each_user_getter(df=df , index=index , slug=slug))
 
 def identify_country(text):
     with open("./countries.json" , "r") as file:
